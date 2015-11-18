@@ -1,0 +1,11 @@
+[package]
+name = "rust-compression"
+version = "0.1.0"
+authors = ["Marcelo Mottalli <mottalli@yahoo.com>"]
+
+[dependencies]
+snappy = "0.2.0"
+rand = "0.3"
+time = "0.1"
+mmap = "0.1.1"
+lz4 = "1.9.131"
