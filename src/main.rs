@@ -116,6 +116,10 @@ fn write_vector(file: &str, data: &Vec<u8>)
 }
 
 // ------------------------------------------------------------------------
+fn sum_values(data: &[u8]) -> u64 {
+    data.iter().fold(0u64, |acc, &item| acc + (item as u64))
+}
+// ------------------------------------------------------------------------
 fn run_test(encoder: &mut Encoder, data: &Vec<u8>)
 {
     println!("----- Testing \"{}\" encoder -----", encoder.name());
@@ -136,7 +140,7 @@ fn run_test(encoder: &mut Encoder, data: &Vec<u8>)
     benchmark(|| {
         println!("Uncompressing...");
         let uncompressed_data: Vec<u8> = benchmark(|| { encoder.decode(&compressed_mapped_data) });
-        let sum = uncompressed_data.iter().fold(0u64, |acc, &item| acc + (item as u64));
+        let sum = sum_values(&uncompressed_data);
         println!("Compressed sum: {}", sum);
     });
     
