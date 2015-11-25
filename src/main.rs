@@ -10,7 +10,6 @@ use std::fs;
 use std::io::Write;
 use std::io::Read;
 use std::os::unix::io::AsRawFd;
-use std::ptr;
 
 // ------------------------------------------------------------------------
 trait Encoder {
@@ -67,18 +66,18 @@ impl Encoder for LZ4Encoder
 //            .block_size(lz4::liblz4::BlockSize::Max256KB)
 //            .level(1)
             .build(buffer)
-            .ok().expect("Unable to create LZ4 encoder");
-        encoder.write_all(data).ok().expect("Unable to compress data with LZ4 encoder");
+            .expect("Unable to create LZ4 encoder");
+        encoder.write_all(data).expect("Unable to compress data with LZ4 encoder");
         let (encoded, result) = encoder.finish();
-        result.ok().expect("Unable to finish compressing data with LZ4");
+        result.expect("Unable to finish compressing data with LZ4");
         encoded
     }
 
     fn decode(&mut self, data: &[u8]) -> Vec<u8>
     {
-        let mut decoder: lz4::Decoder<&[u8]> = lz4::Decoder::new(data).ok().expect("Unable to create LZ4 decoder");
+        let mut decoder: lz4::Decoder<&[u8]> = lz4::Decoder::new(data).expect("Unable to create LZ4 decoder");
         let mut result = Vec::<u8>::new();
-        decoder.read_to_end(&mut result).ok().expect("Unable to uncompress data with LZ4 encoder");
+        decoder.read_to_end(&mut result).expect("Unable to uncompress data with LZ4 encoder");
         result
     }
 }
@@ -113,7 +112,7 @@ fn write_vector(file: &str, data: &Vec<u8>)
 {
     fs::File::create(file)
         .and_then(|mut f| f.write_all(&data[..]))
-        .ok().expect("Could not write file");
+        .expect("Could not write file");
 }
 
 // ------------------------------------------------------------------------
