@@ -63,7 +63,7 @@ impl Encoder for LZ4Encoder
     fn encode(&mut self, data: &[u8]) -> Vec<u8> 
     {
         let buffer = Vec::<u8>::new();
-        let mut encoder = lz4::encoder::EncoderBuilder::new()
+        let mut encoder = lz4::EncoderBuilder::new()
 //            .block_size(lz4::liblz4::BlockSize::Max256KB)
 //            .level(1)
             .build(buffer)
@@ -76,7 +76,7 @@ impl Encoder for LZ4Encoder
 
     fn decode(&mut self, data: &[u8]) -> Vec<u8>
     {
-        let mut decoder: lz4::decoder::Decoder<&[u8]> = lz4::decoder::Decoder::new(data).ok().expect("Unable to create LZ4 decoder");
+        let mut decoder: lz4::Decoder<&[u8]> = lz4::Decoder::new(data).ok().expect("Unable to create LZ4 decoder");
         let mut result = Vec::<u8>::new();
         decoder.read_to_end(&mut result).ok().expect("Unable to uncompress data with LZ4 encoder");
         result
