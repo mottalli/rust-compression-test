@@ -1,9 +1,11 @@
 extern crate rand;
 extern crate snappy;
+extern crate time;
 
 use std::slice;
 use std::mem;
 use std::io;
+use std::io::{Read, Write};
 use std::fs;
 use std::cmp;
 use rand::Rng;
@@ -114,11 +116,51 @@ impl<C> BlockCompressor<C>
             let upper_limit = cmp::min(lower_limit+self.block_size, num_bytes);
             let chunk = &data[lower_limit..upper_limit];
             let compressed_chunk = self.compressor.compress(chunk);
-            dest.write(compressed_chunk.len().to_raw_bytes());
-            dest.write(compressed_chunk);
+            dest.write(compressed_chunk.len().to_raw_bytes()).unwrap();
+            dest.write(compressed_chunk).unwrap();
 
             lower_limit = upper_limit;
         }
+    }
+
+    fn get_block_decompressor<'a, 'b>(&'a mut self, reader: &'b mut Read) -> BlockDecompressor<'a, 'b, C> {
+        BlockDecompressor::new(&mut self.compressor, reader)
+    }
+}
+
+// -----------------------------------------------------------------------------------------------
+struct BlockDecompressor<'a, 'b, C> 
+    where C: Compressor + 'a
+{
+    compressor: &'a mut C,
+    reader: &'b mut Read,
+    buffer: Vec<u8>
+}
+
+impl<'a, 'b, C> BlockDecompressor<'a, 'b, C>
+    where C: Compressor + 'a
+{
+    fn new(compressor: &'a mut C, reader: &'b mut Read) -> BlockDecompressor<'a, 'b, C> {
+        BlockDecompressor {
+            compressor: compressor,
+            reader: reader,
+            buffer: Vec::new()
+        }
+    }
+
+    fn next_block<'c>(&'c mut self) -> Option<&'c [u8]> {
+        // Get the number of bytes
+        let mut chunk_size: usize = 0;
+        match self.reader.read(chunk_size.to_raw_bytes_mut()) {
+            Err(_) => return None,
+            Ok(0) => return None,
+            _ => {}
+        }
+
+        self.buffer.resize(chunk_size, 0);
+        self.reader.read(&mut self.buffer).unwrap();
+        let decompressed_data = self.compressor.decompress(&self.buffer);
+        Some(decompressed_data)
     }
 }
 
@@ -143,6 +185,7 @@ fn generate_random_vector<T, R>(size: usize, rng: &mut R, null_probabilty: f32) 
 // -----------------------------------------------------------------------------------------------
 trait ToRawBytes {
     fn to_raw_bytes(&self) -> &[u8];
+    fn to_raw_bytes_mut(&mut self) -> &mut [u8];
 }
 
 impl<T> ToRawBytes for Vec<T>
@@ -153,6 +196,10 @@ impl<T> ToRawBytes for Vec<T>
         let size = self.len() * mem::size_of::<T>();
         unsafe { slice::from_raw_parts(ptr, size) }
     }
+
+    fn to_raw_bytes_mut(&mut self) -> &mut [u8] {
+        unimplemented!();
+    }
 }
 
 impl ToRawBytes for usize
@@ -162,12 +209,71 @@ impl ToRawBytes for usize
         let size = mem::size_of::<Self>();
         unsafe { slice::from_raw_parts(ptr, size) }
     }
+
+    fn to_raw_bytes_mut(&mut self) -> &mut [u8] {
+        let ptr = (self as *mut Self) as *mut u8;
+        let size = mem::size_of::<Self>();
+        unsafe { slice::from_raw_parts_mut(ptr, size) }
+    }
 }
 
 // -----------------------------------------------------------------------------------------------
-fn main() {
-    let size = 1_000_000;
+fn drop_caches() {
+    fs::OpenOptions::new()
+        .write(true)
+        .create(false)
+        .open("/proc/sys/vm/drop_caches")
+        .and_then(|mut f| f.write(b"3"))
+        .unwrap();
+}
+// -----------------------------------------------------------------------------------------------
+fn do_test<C: Compressor>(values: &Vec<i32>, compressor: C) {
     let file_name = "/tmp/data.bin";
+
+    let mut block_compressor = BlockCompressor::new(compressor, 256*1024);
+    {
+        let mut file = fs::File::create(file_name).unwrap();
+        block_compressor.compress(values.to_raw_bytes(), &mut file);
+    }
+
+
+    let n = 20;
+    let times = (0..n).map(|_| {
+        let tic = time::now();
+
+        drop_caches();
+        let mut file = fs::File::open(file_name).unwrap();
+        let mut block_decompressor = block_compressor.get_block_decompressor(&mut file);
+
+        let mut sum: i64 = 0;
+        while let Some(data) = block_decompressor.next_block() {
+            let values = unsafe { slice::from_raw_parts(data.as_ptr() as *const i32, data.len() / mem::size_of::<i32>()) };
+            sum += values.iter().filter(|&v| *v != i32::null_value()).fold(0i64, |ac, &v| ac + (v as i64));
+            /*{
+                let n = values.len();
+                for i in 0..n {
+                    let value = values[i];
+                    if value == i32::null_value() {
+                        continue;
+                    }
+
+                    sum += value as i64;
+                }
+            }*/
+        }
+
+        let toc = time::now();
+        (toc-tic).num_milliseconds()
+    }).collect::<Vec<_>>();
+
+    let avg_time = times.iter().fold(0i64, |accum, &v| accum + v) / (times.len() as i64);
+    println!("Avg. time: {} ms.", avg_time);
+}
+
+
+// -----------------------------------------------------------------------------------------------
+fn main() {
+    let size = 10_000_000;
 
     let mut rng = rand::thread_rng();
     println!("Generating {} random values...", size);
@@ -176,18 +282,9 @@ fn main() {
     let sum = values.iter().filter(|&v| *v != i32::null_value()).fold(0i64, |ac, &v| ac + (v as i64));
     println!("Sum is {}", sum);
 
-    println!("Compressing values...");
-    let mut block_compressor = BlockCompressor::new(SnappyCompressor::new(), 256*1024);
-    {
-        let mut file = fs::File::create(file_name).unwrap();
-        block_compressor.compress(values.to_raw_bytes(), &mut file);
-    }
+    println!("Benchmarking with no compression...");
+    do_test(&values, NoCompression::new());
+    println!("Benchmarking with Snappy...");
+    do_test(&values, SnappyCompressor::new());
 
-    {
-        let mut file = fs::File::open(file_name).unwrap();
-        let block_decompressor = block_compressor.get_block_decompressor(&mut file);
-
-        while let Some(data) = block_decompressor.next_block() {
-        }
-    }
 }
